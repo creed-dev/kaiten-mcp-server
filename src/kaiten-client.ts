@@ -76,18 +76,34 @@ export interface KaitenLane {
 export interface KaitenType {
   id: number;
   name: string;
+  letter?: string;
+  archived?: boolean;
+  company_id?: number | null;
 }
 
 export interface KaitenTag {
+  id?: number;
   name: string;
+  color?: number;
+  archived?: boolean;
 }
 
 export interface KaitenBlocker {
-  reason?: string;
+  id?: number;
+  card_id?: number;
+  reason?: string | null;
   created?: string;
+  released?: boolean;
+  blocker_card_id?: number | null;
+  blocker_card_title?: string | null;
   blocker?: {
     full_name: string;
   };
+}
+
+export interface AddCardBlockerParams {
+  reason?: string;
+  blocker_card_id?: number;
 }
 
 export interface KaitenCard {
@@ -137,6 +153,20 @@ export interface KaitenComment {
   author_id?: number;
   author?: KaitenUser;
   text: string;
+  created: string;
+  updated?: string;
+}
+
+export interface KaitenTimeLog {
+  id: number;
+  card_id: number;
+  user_id?: number;
+  user?: KaitenUser;
+  author_id?: number;
+  role_id?: number;
+  time_spent: number;
+  for_date: string;
+  comment?: string;
   created: string;
   updated?: string;
 }
@@ -548,6 +578,14 @@ export class KaitenClient {
     }, signal);
   }
 
+  // Time log operations
+  async getCardTimeLogs(cardId: number, signal?: AbortSignal): Promise<KaitenTimeLog[]> {
+    return this.queuedRequest(async () => {
+      const response = await this.client.get(`/cards/${cardId}/time-logs`, { signal });
+      return response.data;
+    }, signal);
+  }
+
   async createComment(cardId: number, text: string, idempotencyKey?: string, signal?: AbortSignal): Promise<KaitenComment> {
     return this.queuedRequest(async () => {
       // Auto-generate idempotency key if not provided
@@ -578,6 +616,69 @@ export class KaitenClient {
   async getCardChildren(cardId: number, signal?: AbortSignal): Promise<KaitenCard[]> {
     return this.queuedRequest(async () => {
       const response = await this.client.get(`/cards/${cardId}/children`, { signal });
+      return response.data;
+    }, signal);
+  }
+
+  /** POST /cards/{card_id}/children — makes `childCardId` a child (subtask) of `cardId`. */
+  async addCardChild(cardId: number, childCardId: number, signal?: AbortSignal): Promise<KaitenCard> {
+    return this.queuedRequest(async () => {
+      const headers = { 'Idempotency-Key': this.generateIdempotencyKey() };
+      const response = await this.client.post(
+        `/cards/${cardId}/children`,
+        { card_id: childCardId },
+        { headers, signal },
+      );
+      return response.data;
+    }, signal);
+  }
+
+  /** DELETE /cards/{card_id}/children/{id} — unlinks the child; both cards stay. */
+  async removeCardChild(cardId: number, childCardId: number, signal?: AbortSignal): Promise<void> {
+    return this.queuedRequest(async () => {
+      await this.client.delete(`/cards/${cardId}/children/${childCardId}`, { signal });
+    }, signal);
+  }
+
+  // Card tags
+  /** POST /cards/{card_id}/tags — adds a tag to the card by name. */
+  async addCardTag(cardId: number, name: string, signal?: AbortSignal): Promise<KaitenTag> {
+    return this.queuedRequest(async () => {
+      const headers = { 'Idempotency-Key': this.generateIdempotencyKey() };
+      const response = await this.client.post(`/cards/${cardId}/tags`, { name }, { headers, signal });
+      return response.data;
+    }, signal);
+  }
+
+  /** DELETE /cards/{card_id}/tags/{tag_id} — removes the tag from the card; the tag itself stays. */
+  async removeCardTag(cardId: number, tagId: number, signal?: AbortSignal): Promise<void> {
+    return this.queuedRequest(async () => {
+      await this.client.delete(`/cards/${cardId}/tags/${tagId}`, { signal });
+    }, signal);
+  }
+
+  // Card blockers
+  /** GET /cards/{card_id}/blockers */
+  async getCardBlockers(cardId: number, signal?: AbortSignal): Promise<KaitenBlocker[]> {
+    return this.queuedRequest(async () => {
+      const response = await this.client.get(`/cards/${cardId}/blockers`, { signal });
+      return response.data;
+    }, signal);
+  }
+
+  /** POST /cards/{card_id}/blockers — blocks `cardId` by a reason and/or a blocking card. */
+  async addCardBlocker(cardId: number, params: AddCardBlockerParams, signal?: AbortSignal): Promise<KaitenBlocker> {
+    return this.queuedRequest(async () => {
+      const headers = { 'Idempotency-Key': this.generateIdempotencyKey() };
+      const response = await this.client.post(`/cards/${cardId}/blockers`, params, { headers, signal });
+      return response.data;
+    }, signal);
+  }
+
+  /** DELETE /cards/{card_id}/blockers/{id} */
+  async removeCardBlocker(cardId: number, blockerId: number, signal?: AbortSignal): Promise<KaitenBlocker> {
+    return this.queuedRequest(async () => {
+      const response = await this.client.delete(`/cards/${cardId}/blockers/${blockerId}`, { signal });
       return response.data;
     }, signal);
   }
@@ -628,11 +729,24 @@ export class KaitenClient {
     }, signal);
   }
 
-  async getTypes(boardId: number, signal?: AbortSignal): Promise<KaitenType[]> {
-    return this.queuedRequest(async () => {
-      const response = await this.client.get(`/boards/${boardId}/card_types`, { signal });
-      return response.data;
-    }, signal);
+  /**
+   * Card types are company-wide in Kaiten: `GET /card-types` (limit <= 100, offset).
+   * There is no board-level endpoint — `/boards/{id}/card_types` answers 404.
+   */
+  async getTypes(signal?: AbortSignal): Promise<KaitenType[]> {
+    const PAGE_SIZE = 100;
+    const all: KaitenType[] = [];
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const page: KaitenType[] = await this.queuedRequest(async () => {
+        const response = await this.client.get('/card-types', {
+          params: { limit: PAGE_SIZE, offset },
+          signal,
+        });
+        return response.data;
+      }, signal);
+      all.push(...page);
+      if (page.length < PAGE_SIZE) return all;
+    }
   }
 
   // User operations

@@ -117,7 +117,7 @@ npm run build
 Покажи список пространств Kaiten
 ```
 
-## Доступные инструменты (26 tools)
+## Доступные инструменты (34 tools)
 
 ### Карточки
 - `kaiten_get_card` - Получить карточку по ID **[format: json/markdown]**
@@ -133,6 +133,16 @@ npm run build
 - `kaiten_create_comment` - Создать комментарий
 - `kaiten_update_comment` - Обновить комментарий
 - `kaiten_delete_comment` - Удалить комментарий
+- `kaiten_get_card_time_logs` - Записи учёта времени карточки (фильтр по дате и пользователю)
+
+### Метки, подкарточки, блокировки
+- `kaiten_add_card_tag` - Добавить метку на карточку по имени
+- `kaiten_remove_card_tag` - Снять метку с карточки
+- `kaiten_add_card_child` - Сделать карточку подкарточкой другой
+- `kaiten_remove_card_child` - Отвязать подкарточку
+- `kaiten_list_card_blockers` - Список блокировок карточки
+- `kaiten_add_card_blocker` - Заблокировать карточку другой карточкой и/или причиной
+- `kaiten_remove_card_blocker` - Снять блокировку
 
 ### Пространства и доски
 - `kaiten_list_spaces` - Список всех пространств
@@ -143,7 +153,7 @@ npm run build
 ### Справочники (для корректных ID)
 - `kaiten_list_columns` - Список колонок (статусов) доски
 - `kaiten_list_lanes` - Список дорожек (lanes/swimlanes) доски
-- `kaiten_list_types` - Список типов карточек доски
+- `kaiten_list_types` - Список типов карточек (общий для всей компании, `GET /card-types`)
 
 ### Пользователи
 - `kaiten_get_current_user` - Получить текущего пользователя

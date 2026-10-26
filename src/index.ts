@@ -27,6 +27,8 @@ import {
   KaitenSpace,
   KaitenBoard,
   KaitenComment,
+  KaitenTimeLog,
+  KaitenBlocker,
   KaitenError,
 } from './kaiten-client.js';
 import {
@@ -41,12 +43,20 @@ import {
   CreateCommentSchema,
   UpdateCommentSchema,
   DeleteCommentSchema,
+  GetCardTimeLogsSchema,
   GetSpaceSchema,
   ListBoardsSchema,
   GetBoardSchema,
   ListColumnsSchema,
   ListLanesSchema,
   ListTypesSchema,
+  AddCardTagSchema,
+  RemoveCardTagSchema,
+  AddCardChildSchema,
+  RemoveCardChildSchema,
+  ListCardBlockersSchema,
+  AddCardBlockerSchema,
+  RemoveCardBlockerSchema,
   ListUsersSchema,
   SetLogLevelSchema,
 } from './schemas.js';
@@ -107,6 +117,32 @@ function simplifyComment(comment: KaitenComment) {
     updated: comment.updated,
     author_id: comment.author?.id,
     author_name: comment.author?.full_name
+  };
+}
+
+function simplifyTimeLog(log: KaitenTimeLog) {
+  return {
+    id: log.id,
+    card_id: log.card_id,
+    user_id: log.user_id ?? log.user?.id,
+    user_name: log.user?.full_name,
+    time_spent: log.time_spent,
+    for_date: log.for_date,
+    comment: log.comment || undefined,
+    created: log.created,
+    updated: log.updated
+  };
+}
+
+function simplifyBlocker(blocker: KaitenBlocker) {
+  return {
+    id: blocker.id,
+    card_id: blocker.card_id,
+    blocker_card_id: blocker.blocker_card_id ?? null,
+    blocker_card_title: blocker.blocker_card_title ?? null,
+    reason: blocker.reason ?? null,
+    released: blocker.released ?? false,
+    created: blocker.created,
   };
 }
 
@@ -379,7 +415,7 @@ OPTIONAL PARAMETERS:
 - column_id (optional): Column (stage) ID. Get from kaiten_list_columns(board_id). If omitted, card goes to first/default column.
 - lane_id (optional): Lane (swimlane) ID. Get from kaiten_list_lanes(board_id). If omitted, uses default lane.
 - description (optional): Markdown-formatted card description. Can include formatting, lists, links.
-- type_id (optional): Card type ID. Get from kaiten_list_types(board_id). Examples: "Task", "Bug", "Feature".
+- type_id (optional): Card type ID. Get from kaiten_list_types(). Examples: "Task", "Bug", "Feature".
 - size (optional): Story points or time estimate. Non-negative number. Examples: 3, 5, 8 (Fibonacci), or hours.
 - asap (optional): Mark as urgent/ASAP. Boolean true/false.
 - owner_id (optional): Assign to user. Get user_id from kaiten_list_users(query="name").
@@ -445,7 +481,7 @@ BOARD STRUCTURE DISCOVERY WORKFLOW:
 2. kaiten_list_boards(space_id) - find board_id
 3. kaiten_list_columns(board_id) - get column IDs (stages)
 4. kaiten_list_lanes(board_id) - get lane IDs (swimlanes)
-5. kaiten_list_types(board_id) - get type IDs (Task/Bug/Feature)
+5. kaiten_list_types() - get type IDs (Task/Bug/Feature)
 6. kaiten_list_users(query="name") - find assignee
 7. kaiten_create_card({...all IDs...})
 
@@ -525,7 +561,7 @@ OPTIONAL PARAMETERS (at least one required):
 - state (optional): Card state. 1=queued, 2=in progress, 3=done
 - column_id (optional): Move to column. Get from kaiten_list_columns(board_id).
 - lane_id (optional): Move to lane. Get from kaiten_list_lanes(board_id).
-- type_id (optional): Change card type. Get from kaiten_list_types(board_id).
+- type_id (optional): Change card type. Get from kaiten_list_types().
 - size (optional): Update estimate/story points. Non-negative number.
 - asap (optional): Mark/unmark as urgent. Boolean true/false.
 - owner_id (optional): Reassign card. Get from kaiten_list_users(query="name"). Pass null to unassign.
@@ -908,6 +944,77 @@ RELATED TOOLS:
         card_id: {
           type: 'number',
           description: 'Card ID',
+        },
+      },
+      required: ['card_id'],
+    },
+  },
+  {
+    name: 'kaiten_get_card_time_logs',
+    description: `Get logged time entries for a card, optionally filtered by date and/or user.
+
+PURPOSE: Retrieve time-tracking entries (timesheets) recorded against a card. Use to check how much time was logged on a card on a specific day by a specific person - e.g. for daily/weekly work reports. Time is independent of the card's status history: an entry can be logged today even if the card's status last changed days ago.
+
+PARAMETERS:
+- card_id (required): Card ID to get time logs from. Positive integer.
+  How to find: Use kaiten_search_cards or kaiten_get_card
+- for_date (optional): Only return entries logged for this date. Format: "YYYY-MM-DD".
+- user_id (optional): Only return entries logged by this user ID. Get from kaiten_get_current_user or kaiten_list_users.
+
+RETURNS: Simplified JSON array of time log entries (filtered by for_date/user_id if given), each with:
+- id: Time log entry ID
+- card_id: Parent card ID
+- user_id, user_name: Who logged the time
+- time_spent: Minutes logged in this entry
+- for_date: The date this time was logged for (YYYY-MM-DD, not the entry's creation date)
+- comment: Optional note attached to the entry
+- created, updated: Entry timestamps (ISO 8601)
+
+Empty array [] if the card has no matching time log entries. Sum "time_spent" across entries to get total minutes for a card/date/user combination.
+
+USAGE EXAMPLES:
+✅ DO: Check today's logged time for a card:
+  kaiten_get_card_time_logs({card_id: 12345, for_date: "2026-09-17"})
+
+✅ DO: Check a specific person's time on a card:
+  kaiten_get_card_time_logs({card_id: 12345, user_id: 1010588})
+
+✅ DO: Build a daily report by summing time_spent per card:
+  1. kaiten_search_cards({...}) → candidate cards for the day
+  2. kaiten_get_card_time_logs({card_id, for_date, user_id}) per card → sum time_spent
+
+❌ DON'T: Assume for_date matches created - for_date is the work date the user attributed the entry to, which can be backdated
+❌ DON'T: Rely on card status/column to infer when work happened - use time logs instead
+
+ERRORS:
+- NOT_FOUND (404): Card doesn't exist or was deleted
+  Solution: Verify card_id with kaiten_search_cards
+- AUTH_ERROR (403): No permission to view card/timesheets
+  Solution: Check API token has read access to the card's space and timesheets feature is enabled for the account
+
+RELATED TOOLS:
+- kaiten_get_card: Check a card's aggregate time_spent_sum (all-time, not per-date/user)
+- kaiten_search_cards: Find cards before checking their time logs`,
+    annotations: {
+      readOnly: true,
+      destructive: false,
+      idempotent: true,
+      openWorld: true,
+    },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: {
+          type: 'number',
+          description: 'Card ID',
+        },
+        for_date: {
+          type: 'string',
+          description: 'Filter by date logged (YYYY-MM-DD)',
+        },
+        user_id: {
+          type: 'number',
+          description: 'Filter by user ID',
         },
       },
       required: ['card_id'],
@@ -1739,7 +1846,7 @@ This is typically the first step in working with cards:
 1. **Find boards**: kaiten_list_boards() → get board_id
 2. **Explore board**: kaiten_list_columns(board_id) → get stages
 3. **Optional**: kaiten_list_lanes(board_id) → get swimlanes
-4. **Optional**: kaiten_list_types(board_id) → get card types
+4. **Optional**: kaiten_list_types() → get card types
 5. **Create/search cards**: Use discovered board_id
 
 RELATED TOOLS:
@@ -1747,7 +1854,7 @@ RELATED TOOLS:
 - kaiten_get_board: Get detailed board info including settings
 - kaiten_list_columns: Get board columns (stages) for card placement
 - kaiten_list_lanes: Get board lanes (swimlanes)
-- kaiten_list_types: Get card types available on board
+- kaiten_list_types: Get card types (company-wide)
 - kaiten_search_cards: Search cards on specific board
 - kaiten_cache_invalidate_boards: Force refresh cached boards`,
     inputSchema: {
@@ -1856,7 +1963,7 @@ Typical sequence for creating cards with full placement:
 1. kaiten_list_boards() → get board_id
 2. **kaiten_list_columns(board_id)** → get column_id (stages)
 3. kaiten_list_lanes(board_id) → get lane_id (swimlanes, optional)
-4. kaiten_list_types(board_id) → get type_id (card types, optional)
+4. kaiten_list_types() → get type_id (card types, optional)
 5. kaiten_create_card({board_id, column_id, lane_id, type_id, ...})
 
 COMMON COLUMN NAMES:
@@ -1871,7 +1978,7 @@ Typical column titles you'll encounter:
 RELATED TOOLS:
 - kaiten_list_boards: Find board_id before listing columns
 - kaiten_list_lanes: Get swimlanes (vertical grouping)
-- kaiten_list_types: Get card types for the board
+- kaiten_list_types: Get card types (company-wide)
 - kaiten_create_card: Create card in specific column
 - kaiten_update_card: Move card to different column
 - kaiten_search_cards: Filter cards by column_id`,
@@ -1993,13 +2100,13 @@ Complete workflow for card placement:
 1. kaiten_list_boards() → get board_id
 2. kaiten_list_columns(board_id) → get column_id (required)
 3. **kaiten_list_lanes(board_id)** → get lane_id (optional, check if empty)
-4. kaiten_list_types(board_id) → get type_id (optional)
+4. kaiten_list_types() → get type_id (optional)
 5. kaiten_create_card({board_id, column_id, lane_id?, type_id?, ...})
 
 RELATED TOOLS:
 - kaiten_list_boards: Find board_id before listing lanes
 - kaiten_list_columns: Get columns (required, use first for lanes)
-- kaiten_list_types: Get card types for the board
+- kaiten_list_types: Get card types (company-wide)
 - kaiten_create_card: Create card with optional lane_id
 - kaiten_update_card: Move card to different lane
 - kaiten_search_cards: Filter cards by lane_id`,
@@ -2016,134 +2123,265 @@ RELATED TOOLS:
   },
   {
     name: 'kaiten_list_types',
-    description: `List card types available on a board. Types categorize cards by nature of work (Task, Bug, Feature, etc.).
+    description: `List card types (Card, Feature, Bug, ...). Card types are COMPANY-WIDE in Kaiten, not per board.
 
-PURPOSE: Discover valid type_id values for creating/updating cards. Card types categorize work by nature (implementation task, bug fix, feature request, etc.), help with filtering and reporting. Each board has its own type configuration.
+PURPOSE: Discover valid type_id values for kaiten_create_card / kaiten_update_card. Kaiten API: GET /card-types.
 
 PARAMETERS:
-- board_id (required): Board ID to get card types from. Positive integer.
-  How to find: Use kaiten_list_boards to discover board_id
+- include_archived (optional): Also return archived types. Default false.
+- board_id (optional, IGNORED): Kept only for backward compatibility. Every board sees the same company-wide types.
 
-RETURNS: JSON array of card type objects with:
-- id: Type ID (use for type_id in card operations)
-- name: Type name (e.g., "Task", "Bug", "Feature", "Story")
-- Order: Types may be returned in priority or alphabetical order
-
-Not cached - fetches fresh data on every call.
+RETURNS: JSON array of { id, name, letter, archived }. Not cached.
 
 USAGE EXAMPLES:
-✅ DO: Get types before creating card with specific type:
-  1. kaiten_list_boards() → get board_id
-  2. kaiten_list_types(board_id) → find "Bug" type_id
-  3. kaiten_create_card({board_id, type_id: <bug_type_id>, title: "Fix login error"})
-
-✅ DO: Find type by name:
-  kaiten_list_types(board_id) → filter by name to get type_id for "Feature"
-
-✅ DO: Change card type:
-  1. kaiten_list_types(board_id) → get new type_id
-  2. kaiten_update_card({card_id: 12345, type_id: <new_type_id>})
-
-✅ DO: List available work types for user guidance:
-  kaiten_list_types(board_id) → show user "Available types: Task, Bug, Feature"
-
-❌ DON'T: Assume standard types exist - each board configures its own
-❌ DON'T: Use type_id from different board - causes validation error
-❌ DON'T: Hardcode type names - types vary by board and organization
+✅ DO: kaiten_list_types() → find "Feature" → kaiten_create_card({..., type_id: <feature_id>})
+✅ DO: kaiten_list_types() → find "Bug" → kaiten_search_cards({board_id, type_id: <bug_id>})
+❌ DON'T: Expect different types per board - the list is the same for the whole company
 
 ERRORS:
-- NOT_FOUND (404): board_id doesn't exist or is archived
-  Solution: Verify board_id with kaiten_list_boards
-
-- AUTH_ERROR (403): No permission to view board structure
-  Solution: Check API token has read access to the board's space
-
-CARD TYPES CONCEPT:
-Types categorize cards by work nature:
-- **Task**: General implementation work
-- **Bug**: Defect/issue that needs fixing
-- **Feature**: New functionality request
-- **Story**: User story (Agile/Scrum)
-- **Epic**: Large initiative spanning multiple stories
-- **Spike**: Research/investigation work
-- **Technical Debt**: Code improvement/refactoring
-
-Benefits:
-- Better organization and filtering
-- Visual distinction (types often have colors in UI)
-- Reporting by work type
-- Workflow customization per type
-
-COMMON TYPE NAMES:
-**Software Development:**
-- Task, Bug, Feature, Story, Epic, Spike, Technical Debt, Improvement
-
-**Project Management:**
-- Action Item, Decision, Risk, Issue, Milestone
-
-**Support/Service:**
-- Ticket, Incident, Request, Question, Problem
-
-**Marketing/Content:**
-- Campaign, Content Piece, Design Asset, Review
-
-TYPE_ID OPTIONAL:
-- Creating card: type_id is optional parameter
-- If omitted: Board uses default type (usually first or "Task")
-- Updating card: Can change type_id or omit to keep current
-- Filtering: type_id useful for search_cards to find specific work types
-
-BOARD-SPECIFIC CONFIGURATION:
-Each board has independent type configuration:
-- Board A might have: Task, Bug, Feature
-- Board B might have: Story, Epic, Spike, Bug
-- No universal type list across all boards
-- Always fetch types for specific board_id
-
-TYPE vs STATE vs COLUMN:
-Don't confuse different classification systems:
-- **Type** (type_id): WHAT kind of work (Bug, Feature, Task)
-- **State** (1/2/3): WORKFLOW position (Queued, In Progress, Done)
-- **Column** (column_id): BOARD position (Backlog, Review, Testing)
-
-Example: Bug (type) in In Progress (state) in Testing column (column_id)
-
-FILTERING BY TYPE:
-Use types for targeted searches:
-
-Find all bugs:
-  1. kaiten_list_types(board_id) → get bug type_id
-  2. kaiten_search_cards({board_id, type_id: <bug_type_id>})
-
-Find unresolved bugs:
-  1. kaiten_list_types(board_id) → get bug type_id
-  2. kaiten_search_cards({board_id, type_id: <bug_type_id>, state: 1 or 2})
-
-BOARD STRUCTURE DISCOVERY:
-Complete workflow for card creation:
-
-1. kaiten_list_boards() → get board_id
-2. kaiten_list_columns(board_id) → get column_id
-3. kaiten_list_lanes(board_id) → get lane_id (if used)
-4. **kaiten_list_types(board_id)** → get type_id (optional)
-5. kaiten_create_card({board_id, column_id, type_id, ...})
+- AUTH_ERROR (401/403): Token has no access to card types
 
 RELATED TOOLS:
-- kaiten_list_boards: Find board_id before listing types
-- kaiten_list_columns: Get columns for complete board structure
-- kaiten_list_lanes: Get lanes for complete board structure
-- kaiten_create_card: Create card with specific type_id
-- kaiten_update_card: Change card type
-- kaiten_search_cards: Filter cards by type_id`,
+- kaiten_create_card, kaiten_update_card: Use type_id from this list
+- kaiten_search_cards: Filter by type_id`,
+    annotations: {
+      readOnly: true,
+      destructive: false,
+      idempotent: true,
+      openWorld: true,
+    },
     inputSchema: {
       type: 'object',
       properties: {
+        include_archived: {
+          type: 'boolean',
+          description: 'Include archived card types (default false)',
+        },
         board_id: {
           type: 'number',
-          description: 'Board ID',
+          description: 'Ignored: card types are company-wide',
         },
       },
-      required: ['board_id'],
+    },
+  },
+  {
+    name: 'kaiten_add_card_tag',
+    description: `Add a tag (label) to a card by tag name. Kaiten API: POST /cards/{card_id}/tags.
+
+PURPOSE: Apply labels such as triage labels ("ready-for-agent", "needs-triage") to a card. kaiten_create_card and kaiten_update_card can NOT set tags - use this tool.
+
+PARAMETERS:
+- card_id (required): Card ID.
+- name (required): Tag name, 1-128 characters. An existing company tag with this name is reused; Kaiten creates the tag if it does not exist yet.
+
+RETURNS: The tag object { id, name, color, ... }.
+
+USAGE EXAMPLES:
+✅ DO: kaiten_add_card_tag({card_id: 12345, name: "ready-for-agent"})
+❌ DON'T: Pass tags to kaiten_create_card / kaiten_update_card - they are not supported there
+
+ERRORS:
+- VALIDATION_ERROR (400): Empty or too long name
+- NOT_FOUND (404): Card doesn't exist
+
+RELATED TOOLS:
+- kaiten_remove_card_tag: Remove a tag (needs tag_id)
+- kaiten_get_card (format=json): See tags currently on a card, with their ids`,
+    annotations: {
+      readOnly: false,
+      destructive: false,
+      idempotent: true,
+      openWorld: true,
+    },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'number', description: 'Card ID' },
+        name: { type: 'string', description: 'Tag name, e.g. "ready-for-agent"' },
+      },
+      required: ['card_id', 'name'],
+    },
+  },
+  {
+    name: 'kaiten_remove_card_tag',
+    description: `Remove a tag from a card. The tag itself stays in the company. Kaiten API: DELETE /cards/{card_id}/tags/{tag_id}.
+
+PARAMETERS:
+- card_id (required): Card ID.
+- tag_id (required): Tag ID. Find it in the "tags" array of kaiten_get_card({card_id, format: "json"}).
+
+RETURNS: Confirmation text.
+
+RELATED TOOLS:
+- kaiten_add_card_tag: Add a tag by name`,
+    annotations: {
+      readOnly: false,
+      destructive: false,
+      idempotent: true,
+      openWorld: true,
+    },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'number', description: 'Card ID' },
+        tag_id: { type: 'number', description: 'Tag ID' },
+      },
+      required: ['card_id', 'tag_id'],
+    },
+  },
+  {
+    name: 'kaiten_add_card_child',
+    description: `Make one card a child (subtask) of another. Kaiten API: POST /cards/{card_id}/children.
+
+PURPOSE: Build parent/child hierarchy, e.g. attach tickets to the spec they were split from. The child shows up in the parent's subtasks list (kaiten_get_card) and its progress counts towards the parent.
+
+PARAMETERS:
+- card_id (required): Parent card ID.
+- child_card_id (required): Card to attach as a child.
+
+RETURNS: Simplified child card { id, title, parents_count, url }.
+
+USAGE EXAMPLES:
+✅ DO: kaiten_add_card_child({card_id: <spec_id>, child_card_id: <ticket_id>})
+❌ DON'T: Swap the ids - card_id is the PARENT
+
+ERRORS:
+- VALIDATION_ERROR (400): e.g. code 64 - an archived card can't be a parent
+- PAYMENT_REQUIRED (402): Card hierarchy is not available on the account's tariff
+- NOT_FOUND (404): One of the cards doesn't exist
+
+RELATED TOOLS:
+- kaiten_remove_card_child: Detach a child
+- kaiten_get_card: See subtasks of a card`,
+    annotations: {
+      readOnly: false,
+      destructive: false,
+      idempotent: true,
+      openWorld: true,
+    },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'number', description: 'Parent card ID' },
+        child_card_id: { type: 'number', description: 'Child card ID' },
+      },
+      required: ['card_id', 'child_card_id'],
+    },
+  },
+  {
+    name: 'kaiten_remove_card_child',
+    description: `Detach a child card from its parent. Both cards stay. Kaiten API: DELETE /cards/{card_id}/children/{child_id}.
+
+PARAMETERS:
+- card_id (required): Parent card ID.
+- child_card_id (required): Child card ID to detach.
+
+RETURNS: Confirmation text.`,
+    annotations: {
+      readOnly: false,
+      destructive: false,
+      idempotent: true,
+      openWorld: true,
+    },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'number', description: 'Parent card ID' },
+        child_card_id: { type: 'number', description: 'Child card ID' },
+      },
+      required: ['card_id', 'child_card_id'],
+    },
+  },
+  {
+    name: 'kaiten_list_card_blockers',
+    description: `List blocks on a card. Kaiten API: GET /cards/{card_id}/blockers.
+
+PARAMETERS:
+- card_id (required): The (possibly blocked) card ID.
+
+RETURNS: JSON array of { id, reason, blocker_card_id, blocker_card_title, released, created }. "id" is the blocker_id for kaiten_remove_card_blocker. Released blocks have released=true.
+
+RELATED TOOLS:
+- kaiten_add_card_blocker, kaiten_remove_card_blocker`,
+    annotations: {
+      readOnly: true,
+      destructive: false,
+      idempotent: true,
+      openWorld: true,
+    },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'number', description: 'Card ID' },
+      },
+      required: ['card_id'],
+    },
+  },
+  {
+    name: 'kaiten_add_card_blocker',
+    description: `Block a card - by another card ("blocked by") and/or with a reason. Kaiten API: POST /cards/{card_id}/blockers.
+
+PURPOSE: Record a native "blocked by" dependency between tickets (e.g. ticket B can't start until ticket A is done), or block a card with a free-text reason. The blocked card is shown as BLOCKED on the board.
+
+PARAMETERS:
+- card_id (required): The card that IS BLOCKED.
+- blocker_card_id (optional): The card that blocks it.
+- reason (optional): Block reason, 1-4096 characters.
+At least one of blocker_card_id / reason is required.
+
+RETURNS: The blocker object { id, card_id, blocker_card_id, blocker_card_title, reason, released }.
+
+USAGE EXAMPLES:
+✅ DO: Ticket B is blocked by ticket A: kaiten_add_card_blocker({card_id: B, blocker_card_id: A})
+✅ DO: kaiten_add_card_blocker({card_id: 12345, reason: "Waiting for API access"})
+❌ DON'T: Swap the ids - card_id is the BLOCKED card, blocker_card_id is the one blocking it
+
+ERRORS:
+- VALIDATION_ERROR (400): Neither blocker_card_id nor reason, or reason too long
+- PAYMENT_REQUIRED (402): Card-to-card blocking is not available on the account's tariff
+- NOT_FOUND (404): Card doesn't exist
+
+RELATED TOOLS:
+- kaiten_list_card_blockers: See blocks and their ids
+- kaiten_remove_card_blocker: Release a block`,
+    annotations: {
+      readOnly: false,
+      destructive: false,
+      idempotent: false,
+      openWorld: true,
+    },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'number', description: 'Blocked card ID' },
+        blocker_card_id: { type: 'number', description: 'Blocking card ID' },
+        reason: { type: 'string', description: 'Block reason' },
+      },
+      required: ['card_id'],
+    },
+  },
+  {
+    name: 'kaiten_remove_card_blocker',
+    description: `Release (remove) a block from a card. Kaiten API: DELETE /cards/{card_id}/blockers/{id}.
+
+PARAMETERS:
+- card_id (required): The blocked card ID.
+- blocker_id (required): Blocker record id from kaiten_list_card_blockers (NOT the blocking card id).
+
+RETURNS: The released blocker object.`,
+    annotations: {
+      readOnly: false,
+      destructive: false,
+      idempotent: true,
+      openWorld: true,
+    },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'number', description: 'Blocked card ID' },
+        blocker_id: { type: 'number', description: 'Blocker record ID' },
+      },
+      required: ['card_id', 'blocker_id'],
     },
   },
   {
@@ -2778,6 +3016,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case 'kaiten_get_card_time_logs': {
+        const validatedArgs = GetCardTimeLogsSchema.parse(args);
+        const logs = await kaitenClient.getCardTimeLogs(validatedArgs.card_id, signal);
+        const filtered = logs.filter((log) => {
+          if (validatedArgs.for_date && log.for_date !== validatedArgs.for_date) return false;
+          const logUserId = log.user_id ?? log.user?.id;
+          if (validatedArgs.user_id && logUserId !== validatedArgs.user_id) return false;
+          return true;
+        });
+        const simplified = filtered.map(simplifyTimeLog);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(simplified, null, 2),
+            },
+          ],
+        };
+      }
+
       case 'kaiten_create_comment': {
         const validatedArgs = CreateCommentSchema.parse(args);
         const comment = await kaitenClient.createComment(
@@ -3184,13 +3442,123 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case 'kaiten_list_types': {
         const validatedArgs = ListTypesSchema.parse(args);
-        const types = await kaitenClient.getTypes(validatedArgs.board_id, signal);
+        const types = await kaitenClient.getTypes(signal);
+        const simplified = types
+          .filter((t) => validatedArgs.include_archived || !t.archived)
+          .map((t) => ({ id: t.id, name: t.name, letter: t.letter, archived: t.archived ?? false }));
 
         return {
           content: [
             {
               type: 'text' as const,
-              text: JSON.stringify(types, null, 2),
+              text: JSON.stringify(simplified, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'kaiten_add_card_tag': {
+        const validatedArgs = AddCardTagSchema.parse(args);
+        const tag = await kaitenClient.addCardTag(validatedArgs.card_id, validatedArgs.name, signal);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify({ card_id: validatedArgs.card_id, tag: { id: tag.id, name: tag.name } }, null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'kaiten_remove_card_tag': {
+        const validatedArgs = RemoveCardTagSchema.parse(args);
+        await kaitenClient.removeCardTag(validatedArgs.card_id, validatedArgs.tag_id, signal);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Tag ${validatedArgs.tag_id} removed from card ${validatedArgs.card_id}`,
+            },
+          ],
+        };
+      }
+
+      case 'kaiten_add_card_child': {
+        const validatedArgs = AddCardChildSchema.parse(args);
+        const child = await kaitenClient.addCardChild(validatedArgs.card_id, validatedArgs.child_card_id, signal);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(
+                {
+                  parent_card_id: validatedArgs.card_id,
+                  child: {
+                    id: child.id,
+                    title: child.title,
+                    parents_count: child.parents_count,
+                    url: simplifyCard(child).url,
+                  },
+                },
+                null,
+                2,
+              ),
+            },
+          ],
+        };
+      }
+
+      case 'kaiten_remove_card_child': {
+        const validatedArgs = RemoveCardChildSchema.parse(args);
+        await kaitenClient.removeCardChild(validatedArgs.card_id, validatedArgs.child_card_id, signal);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: `Card ${validatedArgs.child_card_id} detached from parent ${validatedArgs.card_id}`,
+            },
+          ],
+        };
+      }
+
+      case 'kaiten_list_card_blockers': {
+        const validatedArgs = ListCardBlockersSchema.parse(args);
+        const blockers = await kaitenClient.getCardBlockers(validatedArgs.card_id, signal);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(blockers.map(simplifyBlocker), null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'kaiten_add_card_blocker': {
+        const validatedArgs = AddCardBlockerSchema.parse(args);
+        const blocker = await kaitenClient.addCardBlocker(
+          validatedArgs.card_id,
+          { blocker_card_id: validatedArgs.blocker_card_id, reason: validatedArgs.reason },
+          signal,
+        );
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(simplifyBlocker(blocker), null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'kaiten_remove_card_blocker': {
+        const validatedArgs = RemoveCardBlockerSchema.parse(args);
+        const blocker = await kaitenClient.removeCardBlocker(validatedArgs.card_id, validatedArgs.blocker_id, signal);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(simplifyBlocker(blocker), null, 2),
             },
           ],
         };

@@ -166,6 +166,16 @@ export const DeleteCommentSchema = z.object({
 }).strict();
 
 // ============================================
+// TIME LOG SCHEMAS
+// ============================================
+
+export const GetCardTimeLogsSchema = z.object({
+  card_id: z.number().positive().int().describe('The ID of the card'),
+  for_date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'for_date must be in YYYY-MM-DD format').optional().describe('Filter entries logged for this date (YYYY-MM-DD). Omit to return all dates.'),
+  user_id: z.number().positive().int().optional().describe('Filter entries logged by this user ID. Omit to return all users.'),
+}).strict();
+
+// ============================================
 // SPACE SCHEMAS
 // ============================================
 
@@ -201,7 +211,51 @@ export const ListLanesSchema = z.object({
 }).strict();
 
 export const ListTypesSchema = z.object({
-  board_id: z.number().positive().int().describe('The ID of the board'),
+  // Card types are company-wide; board_id is accepted only for backward compatibility and ignored.
+  board_id: z.number().positive().int().optional().describe('Ignored: card types are company-wide'),
+  include_archived: z.boolean().optional().describe('Include archived card types (default: false)'),
+}).strict();
+
+// ============================================
+// CARD TAG / CHILD / BLOCKER SCHEMAS
+// ============================================
+
+export const AddCardTagSchema = z.object({
+  card_id: z.number().positive().int().describe('The ID of the card'),
+  name: z.string().min(1).max(128).describe('Tag name, e.g. "ready-for-agent"'),
+}).strict();
+
+export const RemoveCardTagSchema = z.object({
+  card_id: z.number().positive().int().describe('The ID of the card'),
+  tag_id: z.number().positive().int().describe('The ID of the tag (see tags in kaiten_get_card with format=json)'),
+}).strict();
+
+export const AddCardChildSchema = z.object({
+  card_id: z.number().positive().int().describe('The ID of the parent card'),
+  child_card_id: z.number().positive().int().describe('The ID of the card to attach as a child'),
+}).strict();
+
+export const RemoveCardChildSchema = z.object({
+  card_id: z.number().positive().int().describe('The ID of the parent card'),
+  child_card_id: z.number().positive().int().describe('The ID of the child card to detach'),
+}).strict();
+
+export const ListCardBlockersSchema = z.object({
+  card_id: z.number().positive().int().describe('The ID of the card'),
+}).strict();
+
+export const AddCardBlockerSchema = z.object({
+  card_id: z.number().positive().int().describe('The ID of the card to block'),
+  blocker_card_id: z.number().positive().int().optional().describe('The ID of the card that blocks it'),
+  reason: z.string().min(1).max(4096).optional().describe('Block reason'),
+}).strict().refine(
+  (args) => args.blocker_card_id !== undefined || args.reason !== undefined,
+  { message: 'Provide blocker_card_id and/or reason' },
+);
+
+export const RemoveCardBlockerSchema = z.object({
+  card_id: z.number().positive().int().describe('The ID of the blocked card'),
+  blocker_id: z.number().positive().int().describe('The ID of the blocker record (from kaiten_list_card_blockers)'),
 }).strict();
 
 // ============================================
@@ -244,6 +298,7 @@ export type GetCardCommentsArgs = z.infer<typeof GetCardCommentsSchema>;
 export type CreateCommentArgs = z.infer<typeof CreateCommentSchema>;
 export type UpdateCommentArgs = z.infer<typeof UpdateCommentSchema>;
 export type DeleteCommentArgs = z.infer<typeof DeleteCommentSchema>;
+export type GetCardTimeLogsArgs = z.infer<typeof GetCardTimeLogsSchema>;
 export type GetSpaceArgs = z.infer<typeof GetSpaceSchema>;
 export type ListBoardsArgs = z.infer<typeof ListBoardsSchema>;
 export type GetBoardArgs = z.infer<typeof GetBoardSchema>;

@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- `kaiten_list_types` возвращал 404 «Resource not found»: клиент вызывал несуществующий `GET /boards/{id}/card_types`. Типы карточек в Kaiten общие для компании — теперь `GET /card-types` с пагинацией. `board_id` стал необязательным и игнорируется (обратная совместимость), добавлен `include_archived`.
+
+### Added
+- `kaiten_get_card_time_logs` — записи учёта времени карточки (`GET /cards/{id}/time-logs`), фильтр по `for_date` и `user_id`.
+- `kaiten_add_card_tag` / `kaiten_remove_card_tag` — метки карточки (`POST /cards/{id}/tags`, `DELETE /cards/{id}/tags/{tag_id}`). `create_card`/`update_card` метки не ставят.
+- `kaiten_add_card_child` / `kaiten_remove_card_child` — подкарточки (`POST /cards/{id}/children`, `DELETE /cards/{id}/children/{child_id}`).
+- `kaiten_list_card_blockers` / `kaiten_add_card_blocker` / `kaiten_remove_card_blocker` — блокировки карточкой и/или причиной (`/cards/{id}/blockers`).
+
 ## [2.4.0] - 2025-10-22
 
 ### 🎛️ Token Economy & UX Release
