@@ -88,6 +88,25 @@ export interface KaitenTag {
   archived?: boolean;
 }
 
+export type KaitenIterationStatus = 'planned' | 'active' | 'closed' | 'removed';
+
+export interface KaitenIteration {
+  id: string;
+  space_uid?: string;
+  title: string;
+  goal?: string | null;
+  status: KaitenIterationStatus;
+  start_date?: string | null;
+  finish_date?: string | null;
+  actual_finish_date?: string | null;
+}
+
+export interface KaitenIterationCard {
+  iteration_id: string;
+  card_uid: string;
+  removed_at?: string | null;
+}
+
 export interface KaitenBlocker {
   id?: number;
   card_id?: number;
@@ -108,6 +127,7 @@ export interface AddCardBlockerParams {
 
 export interface KaitenCard {
   id: number;
+  uid?: string;
   title: string;
   description?: string;
   state?: number;
@@ -173,6 +193,7 @@ export interface KaitenTimeLog {
 
 export interface KaitenSpace {
   id: number;
+  uid?: string;
   title: string;
   description?: string;
   archived?: boolean;
@@ -679,6 +700,41 @@ export class KaitenClient {
   async removeCardBlocker(cardId: number, blockerId: number, signal?: AbortSignal): Promise<KaitenBlocker> {
     return this.queuedRequest(async () => {
       const response = await this.client.delete(`/cards/${cardId}/blockers/${blockerId}`, { signal });
+      return response.data;
+    }, signal);
+  }
+
+  // Iterations (Kaiten API: BETA, addressed by space uid and card uid)
+  /** GET /spaces/{space_uid}/iterations — iterations of a space, optionally filtered by status. */
+  async getIterations(
+    spaceUid: string,
+    statuses?: KaitenIterationStatus[],
+    signal?: AbortSignal,
+  ): Promise<KaitenIteration[]> {
+    return this.queuedRequest(async () => {
+      const params = statuses && statuses.length > 0 ? { status: statuses.join(',') } : undefined;
+      const response = await this.client.get(`/spaces/${spaceUid}/iterations`, { params, signal });
+      return response.data;
+    }, signal);
+  }
+
+  /**
+   * POST /spaces/{space_uid}/iterations/{iteration_id}/cards — puts the card into the iteration
+   * (a card already in another planned/active iteration is moved).
+   */
+  async addCardToIteration(
+    spaceUid: string,
+    iterationId: string,
+    cardUid: string,
+    signal?: AbortSignal,
+  ): Promise<KaitenIterationCard> {
+    return this.queuedRequest(async () => {
+      const headers = { 'Idempotency-Key': this.generateIdempotencyKey() };
+      const response = await this.client.post(
+        `/spaces/${spaceUid}/iterations/${iterationId}/cards`,
+        { card_uid: cardUid },
+        { headers, signal },
+      );
       return response.data;
     }, signal);
   }

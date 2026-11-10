@@ -30,6 +30,8 @@ import {
   KaitenTimeLog,
   KaitenBlocker,
   KaitenError,
+  KaitenErrorType,
+  KaitenIteration,
 } from './kaiten-client.js';
 import {
   GetCardSchema,
@@ -57,6 +59,8 @@ import {
   ListCardBlockersSchema,
   AddCardBlockerSchema,
   RemoveCardBlockerSchema,
+  ListIterationsSchema,
+  AddCardToIterationSchema,
   ListUsersSchema,
   SetLogLevelSchema,
 } from './schemas.js';
@@ -144,6 +148,35 @@ function simplifyBlocker(blocker: KaitenBlocker) {
     released: blocker.released ?? false,
     created: blocker.created,
   };
+}
+
+function simplifyIteration(iteration: KaitenIteration) {
+  return {
+    id: iteration.id,
+    title: iteration.title,
+    status: iteration.status,
+    start_date: iteration.start_date ?? null,
+    finish_date: iteration.finish_date ?? null,
+  };
+}
+
+/** Kaiten iterations API is addressed by the space uid (UUID), not by the numeric space id. */
+async function resolveSpaceUid(spaceId: number | undefined, signal?: AbortSignal): Promise<string> {
+  const id = spaceId ?? DEFAULT_SPACE_ID;
+  if (!id) {
+    throw new KaitenError(
+      KaitenErrorType.VALIDATION_ERROR,
+      'space_id is required: KAITEN_DEFAULT_SPACE_ID is not set',
+      undefined,
+      undefined,
+      'Pass space_id (see kaiten_list_spaces)',
+    );
+  }
+  const space = await kaitenClient.getSpace(id, signal);
+  if (!space.uid) {
+    throw new KaitenError(KaitenErrorType.API_ERROR, `Space ${id} has no uid in the API response`);
+  }
+  return space.uid;
 }
 
 interface SimplifiedCard {
@@ -2385,6 +2418,88 @@ RETURNS: The released blocker object.`,
     },
   },
   {
+    name: 'kaiten_list_iterations',
+    description: `List iterations (sprints) of a space. Kaiten API (beta): GET /spaces/{space_uid}/iterations.
+
+PURPOSE: Find the active (or planned) iteration to put cards into. kaiten_get_card with format=json shows the iteration a card is currently in ("iteration" array).
+
+PARAMETERS:
+- space_id (optional): Space ID. Defaults to KAITEN_DEFAULT_SPACE_ID.
+- status (optional): Array of "planned" | "active" | "closed" | "removed". Omit for all.
+
+RETURNS: JSON array of { id (UUID), title, status, start_date, finish_date }.
+
+USAGE EXAMPLES:
+✅ DO: kaiten_list_iterations({status: ["active"]}) - find the current sprint
+❌ DON'T: Pass iteration ids to kaiten_update_card - use kaiten_add_card_to_iteration
+
+ERRORS:
+- NOT_FOUND (404): Space not found
+- API_ERROR (402): Iterations are not available on the Kaiten plan
+
+RELATED TOOLS:
+- kaiten_add_card_to_iteration: Put a card into an iteration`,
+    annotations: {
+      readOnly: true,
+      destructive: false,
+      idempotent: true,
+      openWorld: true,
+    },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        space_id: { type: 'number', description: 'Space ID (default: KAITEN_DEFAULT_SPACE_ID)' },
+        status: {
+          type: 'array',
+          items: { type: 'string', enum: ['planned', 'active', 'closed', 'removed'] },
+          description: 'Only iterations with these statuses',
+        },
+      },
+    },
+  },
+  {
+    name: 'kaiten_add_card_to_iteration',
+    description: `Put a card into an iteration (sprint). Kaiten API (beta): POST /spaces/{space_uid}/iterations/{iteration_id}/cards.
+
+PURPOSE: kaiten_create_card and kaiten_update_card can NOT set an iteration - use this tool.
+
+PARAMETERS:
+- card_id (required): Card ID.
+- iteration_id (optional): Iteration UUID from kaiten_list_iterations. If omitted, the space's active iteration is used; it is an error if there is none or more than one.
+- space_id (optional): Space ID. Defaults to KAITEN_DEFAULT_SPACE_ID.
+
+RULES (Kaiten): the card must be active and lie on a primary board of the space; the iteration must be planned or active. A card already in another planned/active iteration is moved to this one.
+
+RETURNS: { card_id, iteration: { id, title, status } }.
+
+USAGE EXAMPLES:
+✅ DO: kaiten_add_card_to_iteration({card_id: 12345}) - put the card into the active sprint
+✅ DO: kaiten_add_card_to_iteration({card_id: 12345, iteration_id: "<uuid>"}) - a specific sprint
+
+ERRORS:
+- VALIDATION_ERROR (400): Card is not on a primary board of the space, not active, or iteration is closed/removed
+- NOT_FOUND (404): Card, space or iteration not found
+- API_ERROR: No active iteration, or several active iterations and no iteration_id
+
+RELATED TOOLS:
+- kaiten_list_iterations: Find iteration ids`,
+    annotations: {
+      readOnly: false,
+      destructive: false,
+      idempotent: true,
+      openWorld: true,
+    },
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'number', description: 'Card ID' },
+        iteration_id: { type: 'string', description: 'Iteration UUID (default: the active iteration)' },
+        space_id: { type: 'number', description: 'Space ID (default: KAITEN_DEFAULT_SPACE_ID)' },
+      },
+      required: ['card_id'],
+    },
+  },
+  {
     name: 'kaiten_get_current_user',
     description: `Get information about the currently authenticated user (you) based on the API token.
 
@@ -3559,6 +3674,73 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             {
               type: 'text' as const,
               text: JSON.stringify(simplifyBlocker(blocker), null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'kaiten_list_iterations': {
+        const validatedArgs = ListIterationsSchema.parse(args);
+        const spaceUid = await resolveSpaceUid(validatedArgs.space_id, signal);
+        const iterations = await kaitenClient.getIterations(spaceUid, validatedArgs.status, signal);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(iterations.map(simplifyIteration), null, 2),
+            },
+          ],
+        };
+      }
+
+      case 'kaiten_add_card_to_iteration': {
+        const validatedArgs = AddCardToIterationSchema.parse(args);
+        const spaceUid = await resolveSpaceUid(validatedArgs.space_id, signal);
+        const card = await kaitenClient.getCard(validatedArgs.card_id, signal);
+        if (!card.uid) {
+          throw new KaitenError(KaitenErrorType.API_ERROR, `Card ${validatedArgs.card_id} has no uid in the API response`);
+        }
+
+        let iteration: KaitenIteration;
+        if (validatedArgs.iteration_id) {
+          const all = await kaitenClient.getIterations(spaceUid, ['planned', 'active'], signal);
+          const found = all.find((item) => item.id === validatedArgs.iteration_id);
+          if (!found) {
+            throw new KaitenError(
+              KaitenErrorType.NOT_FOUND,
+              `Iteration ${validatedArgs.iteration_id} is not a planned or active iteration of the space`,
+              404,
+              undefined,
+              'Use kaiten_list_iterations to see valid iteration ids',
+            );
+          }
+          iteration = found;
+        } else {
+          const active = await kaitenClient.getIterations(spaceUid, ['active'], signal);
+          if (active.length !== 1) {
+            throw new KaitenError(
+              KaitenErrorType.API_ERROR,
+              active.length === 0
+                ? 'The space has no active iteration'
+                : `The space has ${active.length} active iterations: ${active.map((item) => `"${item.title}" (${item.id})`).join(', ')}`,
+              undefined,
+              undefined,
+              'Pass iteration_id explicitly (see kaiten_list_iterations)',
+            );
+          }
+          iteration = active[0];
+        }
+
+        await kaitenClient.addCardToIteration(spaceUid, iteration.id, card.uid, signal);
+        return {
+          content: [
+            {
+              type: 'text' as const,
+              text: JSON.stringify(
+                { card_id: validatedArgs.card_id, iteration: simplifyIteration(iteration) },
+                null,
+                2,
+              ),
             },
           ],
         };

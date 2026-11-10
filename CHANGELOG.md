@@ -6,6 +6,7 @@
 - `kaiten_list_types` возвращал 404 «Resource not found»: клиент вызывал несуществующий `GET /boards/{id}/card_types`. Типы карточек в Kaiten общие для компании — теперь `GET /card-types` с пагинацией. `board_id` стал необязательным и игнорируется (обратная совместимость), добавлен `include_archived`.
 
 ### Added
+- `kaiten_list_iterations` / `kaiten_add_card_to_iteration` — итерации (спринты) пространства: список (`GET /spaces/{space_uid}/iterations`) и добавление карточки (`POST /spaces/{space_uid}/iterations/{iteration_id}/cards`). Без `iteration_id` карточка попадает в единственную активную итерацию. `create_card`/`update_card` итерацию не ставят. API итераций в бета-версии и принимает `space_uid`/`card_uid` (берутся из `uid` пространства и карточки).
 - `kaiten_get_card_time_logs` — записи учёта времени карточки (`GET /cards/{id}/time-logs`), фильтр по `for_date` и `user_id`.
 - `kaiten_add_card_tag` / `kaiten_remove_card_tag` — метки карточки (`POST /cards/{id}/tags`, `DELETE /cards/{id}/tags/{tag_id}`). `create_card`/`update_card` метки не ставят.
 - `kaiten_add_card_child` / `kaiten_remove_card_child` — подкарточки (`POST /cards/{id}/children`, `DELETE /cards/{id}/children/{child_id}`).
