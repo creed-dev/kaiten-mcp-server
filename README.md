@@ -117,7 +117,7 @@ npm run build
 Покажи список пространств Kaiten
 ```
 
-## Доступные инструменты (34 tools)
+## Доступные инструменты (36 tools)
 
 ### Карточки
 - `kaiten_get_card` - Получить карточку по ID **[format: json/markdown]**
@@ -143,6 +143,8 @@ npm run build
 - `kaiten_list_card_blockers` - Список блокировок карточки
 - `kaiten_add_card_blocker` - Заблокировать карточку другой карточкой и/или причиной
 - `kaiten_remove_card_blocker` - Снять блокировку
+- `kaiten_list_iterations` - Итерации (спринты) пространства, фильтр по статусу
+- `kaiten_add_card_to_iteration` - Поставить карточку в итерацию (по умолчанию — в активную)
 
 ### Пространства и доски
 - `kaiten_list_spaces` - Список всех пространств

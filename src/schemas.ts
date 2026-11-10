@@ -259,6 +259,25 @@ export const RemoveCardBlockerSchema = z.object({
 }).strict();
 
 // ============================================
+// ITERATION SCHEMAS
+// ============================================
+
+export const ListIterationsSchema = z.object({
+  space_id: z.number().positive().int().optional().describe('Space ID (default: KAITEN_DEFAULT_SPACE_ID)'),
+  status: z
+    .array(z.enum(['planned', 'active', 'closed', 'removed']))
+    .min(1)
+    .optional()
+    .describe('Only iterations with these statuses (default: all)'),
+}).strict();
+
+export const AddCardToIterationSchema = z.object({
+  card_id: z.number().positive().int().describe('The ID of the card to add'),
+  iteration_id: z.string().min(1).optional().describe("Iteration UUID (from kaiten_list_iterations). Omit to use the space's single active iteration"),
+  space_id: z.number().positive().int().optional().describe('Space ID (default: KAITEN_DEFAULT_SPACE_ID)'),
+}).strict();
+
+// ============================================
 // USER SCHEMAS
 // ============================================
 
